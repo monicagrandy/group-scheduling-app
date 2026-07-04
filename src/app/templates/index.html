@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Group Scheduler</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header>
+    <h1>Group Scheduler</h1>
+    <p class="muted">Create a shareable link — everyone picks their times, groups get proposed automatically.</p>
+  </header>
+
+  <section class="panel">
+    <h2>New scheduling group</h2>
+    <form method="post" action="/session/init">
+      <label style="display:flex;flex-direction:column;gap:.25rem;margin-bottom:.75rem">
+        Group title <span class="muted">(e.g. "Standup 101 — week of July 7")</span>
+        <input type="text" name="title" placeholder="My group" style="max-width:380px"/>
+      </label>
+      <label style="display:flex;flex-direction:column;gap:.25rem;margin-bottom:.75rem">
+        Min Group Size
+        <input type="text" id="min_group_size" name="min_group_size" placeholder="3" style="max-width:75px">
+      </label>
+      <label style="display:flex;flex-direction:column;gap:.25rem;margin-bottom:.75rem">
+        Meeting Duration (minutes)
+        <input type="text" id="session_duration" name="session_duration" placeholder="120" style="max-width:75px">
+      </label>
+      <label style="display:flex;flex-direction:column;gap:.25rem;margin-bottom:.75rem">
+        Participants <span class="muted">— one per line or comma-separated</span>
+        <textarea name="names" rows="6" placeholder="Alice&#10;Bob&#10;Carol" required></textarea>
+      </label>
+      <div class="form-actions">
+        <button type="submit" class="primary">Create link</button>
+      </div>
+    </form>
+  </section>
+
+</body>
+</html>

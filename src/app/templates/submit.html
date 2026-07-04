@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{{ title }} — Group Scheduler</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body
+  data-week-start="{{ week_start_local }}"
+  data-session-minutes="{{ session_minutes }}"
+>
+  <header>
+    <h1>{{ title }}</h1>
+    <p class="muted">
+      Week of {{ week_start_local }} to {{ week_end_local }} &middot;
+      <strong>{{ submitted_count }} of {{ expected_count }}</strong> submitted
+    </p>
+  </header>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- Share link -->
+  <section class="panel">
+    <p class="muted">Share this link with everyone in the group:</p>
+    <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+      <code id="share-url">{{ share_url }}</code>
+      <button type="button" onclick="navigator.clipboard.writeText('{{ share_url }}').then(()=>this.textContent='Copied!').catch(()=>{})">Copy</button>
+    </div>
+  </section>
+
+  {% if just_submitted_name %}
+  <section class="panel">
+    <p><strong>Thanks, {{ just_submitted_name }}!</strong> Your availability was recorded. Resubmit any time — it replaces your previous answer.</p>
+  </section>
+  {% endif %}
+
+  <!-- Proposed groups — shown once the planner has run -->
+  {% if last_plan and last_plan.groups %}
+  <section class="panel">
+    <h2>Proposed groups</h2>
+    {% for group in last_plan.groups %}
+    <div class="group-card">
+      <h3>Group {{ group.group_number }}</h3>
+      <p class="muted">{{ group.chosen_window.start_local[:16] | replace("T", " ") }} &rarr; {{ group.chosen_window.end_local[11:16] }}</p>
+      <p>{% for sid in group.student_ids %}{{ students_by_id.get(sid, sid) }}{% if not loop.last %}, {% endif %}{% endfor %}</p>
+    </div>
+    {% endfor %}
+    {% if last_plan.excluded_students %}
+    <p class="excluded-list">
+      Could not schedule: {% for e in last_plan.excluded_students %}{{ students_by_id.get(e.student_id, e.student_id) }}{% if not loop.last %}, {% endif %}{% endfor %}
+    </p>
+    {% endif %}
+    <div class="form-actions" style="margin-top:.5rem">
+      <form method="post" action="/submit/{{ token }}/generate" style="display:inline">
+        <button type="submit">Re-run with latest availability</button>
+      </form>
+    </div>
+  </section>
+  {% elif last_plan %}
+  <section class="panel">
+    <p>The planner ran but could not form any groups — check that submitted availability overlaps enough.</p>
+    <form method="post" action="/submit/{{ token }}/generate" style="display:inline">
+      <button type="submit">Try again</button>
+    </form>
+  </section>
+  {% endif %}
+
+  <!-- Availability submission form -->
+  <section class="panel">
+    <h2>Add your availability</h2>
+    <form id="availability-form" method="post" action="/submit/{{ token }}">
+      <input type="hidden" name="viewer_timezone" id="viewer-timezone" />
+      <div class="field-row">
+        <label>
+          Your name
+          <select name="student_id" required>
+            <option value="" disabled selected>Choose your name&hellip;</option>
+            {% for option in roster_options %}
+            <option value="{{ option.student_id }}">
+              {{ option.name }}{% if option.submitted %} ✓{% endif %}
+            </option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+
+      <p class="muted">
+        Click and drag to select every block you're free this week. Each block must be at
+        least {{ session_minutes }} minutes long — shorter blocks are highlighted in red.
+        Others' submitted times show as translucent overlays so you can see where groups
+        are trending.
+      </p>
+      <div id="availability-grid" class="availability-grid"></div>
+      <div class="grid-toolbar">
+        <button type="button" id="clear-grid-btn">Clear selection</button>
+        <span id="grid-selection-summary" class="muted"></span>
+      </div>
+      <div id="block-inputs"></div>
+
+      <div class="form-actions">
+        <button type="submit" class="primary">Submit my availability</button>
+      </div>
+    </form>
+
+    {% if submitted_count > 0 and not last_plan %}
+    <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid #eee">
+      <form method="post" action="/submit/{{ token }}/generate">
+        <button type="submit">Generate groups now</button>
+      </form>
+    </div>
+    {% endif %}
+  </section>
+
+  <!-- Danger zone -->
+  <details style="margin-top:1rem">
+    <summary class="muted" style="cursor:pointer">Danger zone</summary>
+    <div class="panel" style="margin-top:.5rem">
+      <p class="muted">This permanently deletes the group and makes the link inactive.</p>
+      <form method="post" action="/submit/{{ token }}/clear"
+            onsubmit="return confirm('Delete this group and all submitted availability?')">
+        <button type="submit">Delete this group</button>
+      </form>
+    </div>
+  </details>
+
+  <script id="existing-availability-data" type="application/json">{{ existing_availability_json | safe }}</script>
+  <script src="/static/app.js?v={{ app_js_version }}"></script>
+</body>
+</html>
