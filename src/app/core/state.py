@@ -11,7 +11,8 @@ import os
 import re
 import secrets
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from app.schemas import (
     AvailabilityBlock,
@@ -41,6 +42,7 @@ class AppState:
     availability: dict[str, StudentAvailability] = field(default_factory=dict)
     last_bundle: PlanningBundle | None = None
     last_plan: PlanOutput | None = None
+    all_plans: list[dict] = field(default_factory=list)
     expected_student_ids: list[str] = field(default_factory=list)
 
 
@@ -69,6 +71,7 @@ class AppState:
         )
         self.last_plan = None
         self.last_bundle = None
+        self.all_plans = []
 
     def load_bundle(self, bundle: PlanningBundle) -> list[str]:
         """Replace state with pre-parsed availability from a PlanningBundle file."""
@@ -77,6 +80,7 @@ class AppState:
         self.availability.clear()
         self.last_bundle = None
         self.last_plan = None
+        self.all_plans = []
         self.expected_student_ids = []
         self.class_config = bundle.class_config
         self.week_start_local = bundle.availability.week_start_local
@@ -101,11 +105,8 @@ class AppState:
         return skipped
 
 
-def _upcoming_monday(today: date) -> date:
-    """Return today if it is already Monday, otherwise the next Monday."""
-
-    days_ahead = (0 - today.weekday()) % 7
-    return today + timedelta(days=days_ahead)
+def _today_in_timezone(timezone: str) -> date:
+    return datetime.now(ZoneInfo(timezone)).date()
 
 
 def _base_config(title: str, min_group_size: int, session_duration: int) -> ClassConfig:
@@ -119,11 +120,23 @@ def _base_config(title: str, min_group_size: int, session_duration: int) -> Clas
     )
 
 
-def create_session(title: str, names: list[str], min_group_size: int, session_duration:int) -> tuple[str, AppState]:
-    """Create a new scheduling group session and return its token + state."""
+def create_session(
+    title: str,
+    names: list[str],
+    min_group_size: int,
+    session_duration: int,
+    anchor_date: date | None = None,
+) -> tuple[str, AppState]:
+    """Create a new scheduling group session and return its token + state.
+
+    The calendar window is the 7 days starting the day after anchor_date
+    (defaults to today in CLASS_TIMEZONE). E.g. anchor 7/26 → window 7/27–8/2.
+    """
 
     token = secrets.token_urlsafe(8)
-    week_start = _upcoming_monday(date.today())
+    tz = os.environ.get("CLASS_TIMEZONE", "America/Los_Angeles")
+    anchor = anchor_date if anchor_date is not None else _today_in_timezone(tz)
+    week_start = anchor + timedelta(days=1)
     state = AppState(
         title=title.strip() or "Group",
         class_config=_base_config(title, min_group_size, session_duration),

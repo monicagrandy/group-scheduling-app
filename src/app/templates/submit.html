@@ -34,36 +34,20 @@
   </section>
   {% endif %}
 
-  <!-- Proposed groups — shown once the planner has run -->
-  {% if last_plan and last_plan.groups %}
-  <section class="panel">
+  <!-- Proposed groups — populated by JS from all_plans_data -->
+  <section id="plans-section" class="panel{% if not all_plans %} hidden{% endif %}">
     <h2>Proposed groups</h2>
-    {% for group in last_plan.groups %}
-    <div class="group-card">
-      <h3>Group {{ group.group_number }}</h3>
-      <p class="muted">{{ group.chosen_window.start_local[:16] | replace("T", " ") }} &rarr; {{ group.chosen_window.end_local[11:16] }}</p>
-      <p>{% for sid in group.student_ids %}{{ students_by_id.get(sid, sid) }}{% if not loop.last %}, {% endif %}{% endfor %}</p>
+    <div class="plan-selector-row">
+      <label for="plan-selector" class="muted">View plan:</label>
+      <select id="plan-selector"></select>
     </div>
-    {% endfor %}
-    {% if last_plan.excluded_students %}
-    <p class="excluded-list">
-      Could not schedule: {% for e in last_plan.excluded_students %}{{ students_by_id.get(e.student_id, e.student_id) }}{% if not loop.last %}, {% endif %}{% endfor %}
-    </p>
-    {% endif %}
+    <div id="plan-groups"></div>
     <div class="form-actions" style="margin-top:.5rem">
       <form method="post" action="/submit/{{ token }}/generate" style="display:inline">
         <button type="submit">Re-run with latest availability</button>
       </form>
     </div>
   </section>
-  {% elif last_plan %}
-  <section class="panel">
-    <p>The planner ran but could not form any groups — check that submitted availability overlaps enough.</p>
-    <form method="post" action="/submit/{{ token }}/generate" style="display:inline">
-      <button type="submit">Try again</button>
-    </form>
-  </section>
-  {% endif %}
 
   <!-- Availability submission form -->
   <section class="panel">
@@ -102,7 +86,9 @@
       </div>
     </form>
 
-    {% if submitted_count > 0 and not last_plan %}
+    <div id="availability-legend"></div>
+
+    {% if submitted_count > 0 and not all_plans %}
     <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid #eee">
       <form method="post" action="/submit/{{ token }}/generate">
         <button type="submit">Generate groups now</button>
@@ -124,6 +110,7 @@
   </details>
 
   <script id="existing-availability-data" type="application/json">{{ existing_availability_json | safe }}</script>
+  <script id="all-plans-data" type="application/json">{{ all_plans_json | safe }}</script>
   <script src="/static/app.js?v={{ app_js_version }}"></script>
 </body>
 </html>

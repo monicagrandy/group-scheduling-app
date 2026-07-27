@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -36,6 +36,20 @@ TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "templates"
 STATIC_DIR = Path(__file__).resolve().parents[2] / "static"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
+
+def _time_12h(iso_str: str) -> str:
+    dt = datetime.fromisoformat(iso_str)
+    return dt.strftime("%I:%M %p").lstrip("0")
+
+
+def _friendly_date(iso_str: str) -> str:
+    dt = datetime.fromisoformat(iso_str[:10])
+    return dt.strftime("%b %-d")
+
+
+templates.env.filters["time_12h"] = _time_12h
+templates.env.filters["friendly_date"] = _friendly_date
+
 router = APIRouter()
 
 
@@ -55,6 +69,32 @@ def _build_bundle(state: AppState) -> PlanningBundle:
         entries=list(state.availability.values()),
     )
     return PlanningBundle(class_config=state.class_config, roster=roster, availability=availability)
+
+
+def _build_bundle_without(state: AppState, exclude_student_id: str) -> PlanningBundle:
+    roster = RosterInput(
+        class_id=state.class_config.class_id,
+        students=[s for s in state.students.values() if s.student_id != exclude_student_id],
+    )
+    availability = WeeklyAvailabilityInput(
+        class_id=state.class_config.class_id,
+        week_start_local=state.week_start_local,
+        week_end_local=state.week_end_local,
+        entries=[a for sid, a in state.availability.items() if sid != exclude_student_id],
+    )
+    return PlanningBundle(class_config=state.class_config, roster=roster, availability=availability)
+
+
+def _compute_all_plans(state: AppState) -> list[dict]:
+    """Primary plan + one plan per submitted student (excluding that student)."""
+    plans = []
+    primary = build_plan(_build_bundle(state))
+    plans.append({"label": "Everyone", "plan": primary.model_dump(mode="json")})
+    for sid in sorted(state.availability, key=lambda s: state.students[s].name.lower()):
+        name = state.students[sid].name
+        alt = build_plan(_build_bundle_without(state, sid))
+        plans.append({"label": f"Without {name}", "plan": alt.model_dump(mode="json")})
+    return plans
 
 
 def _existing_availability_json(state: AppState) -> str:
@@ -92,7 +132,8 @@ async def init_session(
     title: str = Form(""),
     names: str = Form(...),
     min_group_size: str = Form(""),
-    session_duration: str = Form("")
+    session_duration: str = Form(""),
+    week_start_date: str = Form(""),
 ) -> RedirectResponse:
     """Create a new session and send the creator straight to the group link."""
 
@@ -104,7 +145,8 @@ async def init_session(
     ]
     min_size = int(min_group_size) if min_group_size.strip() else 3
     duration = int(session_duration) if session_duration.strip() else 120
-    token, state = create_session(title, parsed_names, min_size, duration)
+    anchor = date.fromisoformat(week_start_date) if week_start_date.strip() else None
+    token, state = create_session(title, parsed_names, min_size, duration, anchor_date=anchor)
     save_session(token, state)
     return RedirectResponse(url=f"/submit/{token}", status_code=303)
 
@@ -147,7 +189,8 @@ async def submit_form(request: Request, token: str) -> HTMLResponse:
             "submitted_count": len(state.availability),
             "expected_count": len(state.expected_student_ids),
             "existing_availability_json": _existing_availability_json(state),
-            "last_plan": state.last_plan.model_dump(mode="json") if state.last_plan else None,
+            "all_plans": state.all_plans,
+            "all_plans_json": json.dumps(state.all_plans),
             "students_by_id": {s.student_id: s.name for s in state.students.values()},
             "share_url": share_url,
             "just_submitted_name": request.query_params.get("submitted"),
@@ -188,9 +231,8 @@ async def submit_availability(
     state.replace_student_availability(student_id, blocks=blocks)
 
     if state.is_session_complete() and state.last_plan is None:
-        bundle = _build_bundle(state)
-        state.last_plan = build_plan(bundle)
-        state.last_bundle = bundle
+        state.all_plans = _compute_all_plans(state)
+        state.last_plan = PlanOutput.model_validate(state.all_plans[0]["plan"]) if state.all_plans else None
 
     save_session(token, state)
     submitted_name = state.students[student_id].name
@@ -203,9 +245,8 @@ async def generate_groups(token: str) -> RedirectResponse:
 
     state = get_session(token)
     if state is not None and state.students:
-        bundle = _build_bundle(state)
-        state.last_plan = build_plan(bundle)
-        state.last_bundle = bundle
+        state.all_plans = _compute_all_plans(state)
+        state.last_plan = PlanOutput.model_validate(state.all_plans[0]["plan"]) if state.all_plans else None
         save_session(token, state)
     return RedirectResponse(url=f"/submit/{token}", status_code=303)
 
@@ -242,8 +283,7 @@ async def load_fixture(payload: LoadFixtureRequest) -> JSONResponse:
     use_token = payload.token or "fixture"
     existing = get_session(use_token)
     if existing is None:
-        from app.core.state import AppState, _base_config, _upcoming_monday
-        from datetime import timedelta
+        from app.core.state import AppState
         state = AppState(
             title="Fixture",
             class_config=bundle.class_config,

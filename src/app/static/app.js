@@ -108,17 +108,21 @@ let paintValue = true;
 // drag-selection always works regardless of whether someone else is marked
 // available in that slot.
 
-function hashStringToHue(value) {
-  let hash = 0;
-  for (let i = 0; i < value.length; i++) {
-    hash = (hash * 31 + value.charCodeAt(i)) % 360;
-  }
-  return Math.abs(hash) % 360;
-}
+// Perceptually distinct hues — maximally spread around the wheel, skipping
+// near-yellow (50-70°) which has poor contrast at low opacity.
+const STUDENT_HUES = [4, 211, 142, 31, 271, 185, 328, 88, 305, 158];
 
-function colorForStudent(studentId) {
-  const hue = hashStringToHue(studentId);
-  return { hue, css: `hsla(${hue}, 65%, 48%, 0.38)` };
+// Assign colors by sorted position so every student always gets a unique hue
+// regardless of how their IDs happen to hash.
+function loadStudentColors() {
+  const dataEl = document.getElementById("existing-availability-data");
+  if (!dataEl) return [];
+  let students;
+  try { students = JSON.parse(dataEl.textContent || "[]"); } catch { return []; }
+  return students.map((s, i) => {
+    const hue = STUDENT_HUES[i % STUDENT_HUES.length];
+    return { ...s, hue, css: `hsla(${hue}, 72%, 45%, 0.42)` };
+  });
 }
 
 function expandBlockToVisibleRanges(block, weekStart) {
@@ -150,28 +154,20 @@ function expandBlockToVisibleRanges(block, weekStart) {
 }
 
 function renderExistingAvailabilityOverlay(weekStartLocalStr) {
-  const dataEl = document.getElementById("existing-availability-data");
-  if (!dataEl) return;
-
-  let students;
-  try {
-    students = JSON.parse(dataEl.textContent || "[]");
-  } catch (err) {
-    return;
-  }
+  const students = loadStudentColors();
+  if (!students.length) return;
 
   const weekStart = new Date(`${weekStartLocalStr}T00:00:00`);
 
   // coverage["day,slot"] = [{name, css}]
   const coverage = {};
   students.forEach((student) => {
-    const color = colorForStudent(student.student_id);
     (student.blocks || []).forEach((block) => {
       expandBlockToVisibleRanges(block, weekStart).forEach((range) => {
         for (let slot = range.startSlot; slot <= range.endSlot; slot++) {
           const key = `${range.day},${slot}`;
           if (!coverage[key]) coverage[key] = [];
-          coverage[key].push({ name: student.name, css: color.css });
+          coverage[key].push({ name: student.name, css: student.css });
         }
       });
     });
@@ -198,6 +194,114 @@ function renderExistingAvailabilityOverlay(weekStartLocalStr) {
     }
     cell.title = participants.map((p) => p.name).join(", ");
   });
+}
+
+function renderAvailabilityLegend() {
+  const legendEl = document.getElementById("availability-legend");
+  if (!legendEl) return;
+
+  const students = loadStudentColors();
+  if (!students.length) { legendEl.innerHTML = ""; return; }
+
+  const swatches = students.map((s) => {
+    const solidCss = `hsla(${s.hue}, 72%, 45%, 0.85)`;
+    return `<span class="legend-item"><span class="legend-swatch" style="background:${solidCss}"></span>${s.name}</span>`;
+  }).join("");
+
+  const detailRows = students.map((s) => {
+    const solidCss = `hsla(${s.hue}, 72%, 45%, 0.85)`;
+    const blockTexts = (s.blocks || []).map((b) => {
+      const start = new Date(b.start_local);
+      const end = new Date(b.end_local);
+      const dateFmt = { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/Los_Angeles" };
+      const timeFmt = { hour: "numeric", minute: "2-digit", timeZone: "America/Los_Angeles" };
+      return `${start.toLocaleString(undefined, dateFmt)} – ${end.toLocaleTimeString(undefined, timeFmt)}`;
+    });
+    const blocksHtml = blockTexts.length
+      ? blockTexts.map((t) => `<div class="avail-block-text">${t}</div>`).join("")
+      : `<span class="muted">No blocks submitted</span>`;
+    return `<div class="avail-detail-row">
+      <span class="legend-swatch" style="background:${solidCss};flex-shrink:0"></span>
+      <div><strong>${s.name}</strong>${blocksHtml}</div>
+    </div>`;
+  }).join("");
+
+  legendEl.innerHTML = `
+    <p class="muted legend-label">Submitted availability:</p>
+    <div class="legend-items">${swatches}</div>
+    <details id="availability-details" style="margin-top:0.6rem">
+      <summary class="muted" style="cursor:pointer;font-size:0.85rem;user-select:none">Show everyone's availability in PST</summary>
+      <div class="avail-details-content">${detailRows}</div>
+    </details>`;
+}
+
+function renderPlanGroups(plan, studentsById) {
+  const container = document.getElementById("plan-groups");
+  if (!container) return;
+  container.innerHTML = "";
+
+  if (!plan.groups || !plan.groups.length) {
+    const msg = document.createElement("p");
+    msg.className = "muted";
+    msg.textContent = "No groups could be formed with the current availability.";
+    container.appendChild(msg);
+  } else {
+    plan.groups.forEach((group) => {
+      const names = group.student_ids.map((id) => studentsById[id] || id).join(", ");
+      const start = new Date(group.chosen_window.start_local);
+      const end = new Date(group.chosen_window.end_local);
+      const dateFmt = { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" };
+      const timeFmt = { hour: "numeric", minute: "2-digit" };
+      const card = document.createElement("div");
+      card.className = "group-card";
+      card.innerHTML = `
+        <h3>Group ${group.group_number}</h3>
+        <p class="muted">${start.toLocaleString(undefined, dateFmt)} &rarr; ${end.toLocaleTimeString(undefined, timeFmt)}</p>
+        <p>${names}</p>
+      `;
+      container.appendChild(card);
+    });
+  }
+
+  if (plan.excluded_students && plan.excluded_students.length) {
+    const excluded = document.createElement("p");
+    excluded.className = "excluded-list";
+    excluded.textContent = "Could not schedule: " +
+      plan.excluded_students.map((e) => studentsById[e.student_id] || e.student_id).join(", ");
+    container.appendChild(excluded);
+  }
+}
+
+function initPlanSelector() {
+  const dataEl = document.getElementById("all-plans-data");
+  if (!dataEl) return;
+
+  let allPlans;
+  try { allPlans = JSON.parse(dataEl.textContent || "[]"); } catch { return; }
+  if (!allPlans.length) return;
+
+  const studentsById = {};
+  document.querySelectorAll('select[name="student_id"] option').forEach((opt) => {
+    if (opt.value) studentsById[opt.value] = opt.textContent.replace(/\s*✓\s*$/, "").trim();
+  });
+
+  const section = document.getElementById("plans-section");
+  if (section) section.classList.remove("hidden");
+
+  const selector = document.getElementById("plan-selector");
+  if (selector) {
+    allPlans.forEach((item, i) => {
+      const opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = item.label;
+      selector.appendChild(opt);
+    });
+    selector.addEventListener("change", () => {
+      renderPlanGroups(allPlans[parseInt(selector.value, 10)].plan, studentsById);
+    });
+  }
+
+  renderPlanGroups(allPlans[0].plan, studentsById);
 }
 
 function buildAvailabilityGrid(weekStartLocalStr) {
@@ -426,7 +530,9 @@ document.addEventListener("DOMContentLoaded", () => {
   if (tzInput) tzInput.value = Intl.DateTimeFormat().resolvedOptions().timeZone;
   buildAvailabilityGrid(weekStartLocal);
   renderExistingAvailabilityOverlay(weekStartLocal);
+  renderAvailabilityLegend();
   attachGridInteractions();
+  initPlanSelector();
 
   on("availability-form", "submit", (event) => {
     const ranges = computeSelectedRanges();

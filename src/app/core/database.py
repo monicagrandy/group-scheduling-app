@@ -52,8 +52,7 @@ def _state_to_payload(token: str, state) -> dict:
 
 
 def _payload_to_state(data: dict):
-    from app.core.state import AppState, _upcoming_monday, _base_config
-    from datetime import timedelta
+    from app.core.state import AppState
 
     title = data.get("title", "Group")
     state = AppState(

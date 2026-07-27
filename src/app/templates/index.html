@@ -27,6 +27,10 @@
         <input type="text" id="session_duration" name="session_duration" placeholder="120" style="max-width:75px">
       </label>
       <label style="display:flex;flex-direction:column;gap:.25rem;margin-bottom:.75rem">
+        Start date <span class="muted">(optional — defaults to tomorrow)</span>
+        <input type="date" name="week_start_date" style="max-width:180px"/>
+      </label>
+      <label style="display:flex;flex-direction:column;gap:.25rem;margin-bottom:.75rem">
         Participants <span class="muted">— one per line or comma-separated</span>
         <textarea name="names" rows="6" placeholder="Alice&#10;Bob&#10;Carol" required></textarea>
       </label>
