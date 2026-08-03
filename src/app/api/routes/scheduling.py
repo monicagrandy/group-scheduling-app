@@ -123,7 +123,10 @@ async def index(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "index.html",
-        {"app_js_version": _static_version("app.js")},
+        {
+            "app_js_version": _static_version("app.js"),
+            "css_version": _static_version("styles.css"),
+        },
     )
 
 
@@ -160,7 +163,7 @@ async def submit_form(request: Request, token: str) -> HTMLResponse:
     state = get_session(token)
     if state is None:
         return templates.TemplateResponse(
-            request, "submit_invalid.html", {}, status_code=404
+            request, "submit_invalid.html", {"css_version": _static_version("styles.css")}, status_code=404
         )
 
     roster_options = sorted(
@@ -195,6 +198,7 @@ async def submit_form(request: Request, token: str) -> HTMLResponse:
             "share_url": share_url,
             "just_submitted_name": request.query_params.get("submitted"),
             "app_js_version": _static_version("app.js"),
+            "css_version": _static_version("styles.css"),
         },
     )
 
