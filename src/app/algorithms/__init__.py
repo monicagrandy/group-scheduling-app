@@ -5,13 +5,14 @@ from .normalization import (
     normalize_student_availability,
     normalize_weekly_availability,
 )
-from .planner import build_plan
+from .planner import build_plan, build_plan_options
 
 __all__ = [
     "NormalizationContext",
     "NormalizedStudentAvailability",
     "build_normalization_context",
     "build_plan",
+    "build_plan_options",
     "normalize_student_availability",
     "normalize_weekly_availability",
 ]

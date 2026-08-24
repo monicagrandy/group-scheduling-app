@@ -235,10 +235,24 @@ function renderAvailabilityLegend() {
     </details>`;
 }
 
-function renderPlanGroups(plan, studentsById) {
+function renderPlanGroups(plan, studentsById, isOptimal, optionCount) {
   const container = document.getElementById("plan-groups");
   if (!container) return;
   container.innerHTML = "";
+
+  const ranking = document.getElementById("plan-ranking");
+  if (ranking) {
+    ranking.innerHTML = "";
+    const badge = document.createElement("span");
+    badge.className = isOptimal ? "optimal-badge" : "alternative-badge";
+    badge.textContent = isOptimal ? "Most optimal" : "Valid alternative";
+    ranking.appendChild(badge);
+    ranking.appendChild(document.createTextNode(
+      isOptimal
+        ? ` Best coverage with the least unnecessary group splitting. ${optionCount} valid arrangement${optionCount === 1 ? "" : "s"} found.`
+        : " This arrangement meets the same coverage and scheduling constraints."
+    ));
+  }
 
   if (!plan.groups || !plan.groups.length) {
     const msg = document.createElement("p");
@@ -297,11 +311,12 @@ function initPlanSelector() {
       selector.appendChild(opt);
     });
     selector.addEventListener("change", () => {
-      renderPlanGroups(allPlans[parseInt(selector.value, 10)].plan, studentsById);
+      const selected = allPlans[parseInt(selector.value, 10)];
+      renderPlanGroups(selected.plan, studentsById, Boolean(selected.is_optimal), allPlans.length);
     });
   }
 
-  renderPlanGroups(allPlans[0].plan, studentsById);
+  renderPlanGroups(allPlans[0].plan, studentsById, true, allPlans.length);
 }
 
 function buildAvailabilityGrid(weekStartLocalStr) {

@@ -148,3 +148,27 @@ class TestSubmitRoute:
         with patch("app.api.routes.scheduling.clear_session"):
             client.post(f"/submit/{token}/clear", follow_redirects=False)
         assert get_session(token) is None
+
+    def test_completed_session_stores_ranked_arrangement_options(self, client):
+        token, state = create_session("Test", ["Alice", "Bob", "Carol", "Dave"], 2, 120)
+        for sid in state.expected_student_ids:
+            client.post(
+                f"/submit/{token}",
+                data={
+                    "student_id": sid,
+                    "viewer_timezone": "America/Los_Angeles",
+                    "block_start": ["2026-08-25T18:00:00"],
+                    "block_end": ["2026-08-25T20:00:00"],
+                },
+                follow_redirects=False,
+            )
+
+        updated = get_session(token)
+        assert len(updated.all_plans) == 4
+        assert updated.all_plans[0]["is_optimal"] is True
+        assert updated.all_plans[0]["label"].startswith("Optimal arrangement")
+        assert [len(group["student_ids"]) for group in updated.all_plans[0]["plan"]["groups"]] == [4]
+        assert any(
+            sorted(len(group["student_ids"]) for group in option["plan"]["groups"]) == [2, 2]
+            for option in updated.all_plans[1:]
+        )

@@ -34,11 +34,12 @@
   </section>
   {% endif %}
 
-  <!-- Proposed groups — populated by JS from all_plans_data -->
+  <!-- Proposed arrangements — populated by JS from all_plans_data -->
   <section id="plans-section" class="panel{% if not all_plans %} hidden{% endif %}">
     <h2>Proposed groups</h2>
+    <p id="plan-ranking" class="plan-ranking"></p>
     <div class="plan-selector-row">
-      <label for="plan-selector" class="muted">View plan:</label>
+      <label for="plan-selector" class="muted">View arrangement:</label>
       <select id="plan-selector"></select>
     </div>
     <div id="plan-groups"></div>

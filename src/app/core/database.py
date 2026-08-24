@@ -48,6 +48,7 @@ def _state_to_payload(token: str, state) -> dict:
         "students": {sid: r.model_dump(mode="json") for sid, r in state.students.items()},
         "availability": {sid: e.model_dump(mode="json") for sid, e in state.availability.items()},
         "last_plan": state.last_plan.model_dump(mode="json") if state.last_plan else None,
+        "all_plans": state.all_plans,
     }
 
 
@@ -70,6 +71,7 @@ def _payload_to_state(data: dict):
     }
     if data.get("last_plan"):
         state.last_plan = PlanOutput.model_validate(data["last_plan"])
+    state.all_plans = data.get("all_plans", [])
     return state
 
 

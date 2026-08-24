@@ -259,6 +259,33 @@ button:disabled {
   font-size: 0.9rem;
 }
 
+.plan-ranking {
+  color: #555;
+  font-size: 0.9rem;
+  margin: 0 0 0.75rem;
+}
+
+.optimal-badge,
+.alternative-badge {
+  border-radius: 999px;
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  margin-right: 0.25rem;
+  padding: 0.2rem 0.5rem;
+}
+
+.optimal-badge {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.alternative-badge {
+  background: #eef2ff;
+  color: #3730a3;
+}
+
 .avail-details-content {
   margin-top: 0.5rem;
   display: flex;

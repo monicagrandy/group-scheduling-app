@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ValidationError
 
-from app.algorithms.planner import build_plan
+from app.algorithms.planner import build_plan_options
 from app.core.database import clear_session, load_all_sessions, save_session
 from app.core.state import (
     AppState,
@@ -71,29 +71,23 @@ def _build_bundle(state: AppState) -> PlanningBundle:
     return PlanningBundle(class_config=state.class_config, roster=roster, availability=availability)
 
 
-def _build_bundle_without(state: AppState, exclude_student_id: str) -> PlanningBundle:
-    roster = RosterInput(
-        class_id=state.class_config.class_id,
-        students=[s for s in state.students.values() if s.student_id != exclude_student_id],
-    )
-    availability = WeeklyAvailabilityInput(
-        class_id=state.class_config.class_id,
-        week_start_local=state.week_start_local,
-        week_end_local=state.week_end_local,
-        entries=[a for sid, a in state.availability.items() if sid != exclude_student_id],
-    )
-    return PlanningBundle(class_config=state.class_config, roster=roster, availability=availability)
-
-
 def _compute_all_plans(state: AppState) -> list[dict]:
-    """Primary plan + one plan per submitted student (excluding that student)."""
-    plans = []
-    primary = build_plan(_build_bundle(state))
-    plans.append({"label": "Everyone", "plan": primary.model_dump(mode="json")})
-    for sid in sorted(state.availability, key=lambda s: state.students[s].name.lower()):
-        name = state.students[sid].name
-        alt = build_plan(_build_bundle_without(state, sid))
-        plans.append({"label": f"Without {name}", "plan": alt.model_dump(mode="json")})
+    """Return every maximum-coverage arrangement, ranked best-first."""
+
+    options = build_plan_options(_build_bundle(state))
+    plans: list[dict] = []
+    for index, plan in enumerate(options):
+        group_sizes = sorted((len(group.student_ids) for group in plan.groups), reverse=True)
+        group_word = "group" if len(group_sizes) == 1 else "groups"
+        size_summary = " + ".join(str(size) for size in group_sizes) or "no valid groups"
+        prefix = "Optimal arrangement" if index == 0 else f"Alternative {index}"
+        plans.append(
+            {
+                "label": f"{prefix} — {len(group_sizes)} {group_word} ({size_summary})",
+                "is_optimal": index == 0,
+                "plan": plan.model_dump(mode="json"),
+            }
+        )
     return plans
 
 

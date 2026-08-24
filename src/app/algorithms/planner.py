@@ -58,7 +58,7 @@ class SearchOutcome:
 
 @dataclass(frozen=True)
 class PlannerSearchResult:
-    """Best plan found for a requested max group count."""
+    """One valid plan found for a requested max group count."""
 
     requested_max_groups: int
     covered_count: int
@@ -68,7 +68,18 @@ class PlannerSearchResult:
 
 
 def build_plan(bundle: PlanningBundle) -> PlanOutput:
-    """Build the final draft schedule for one validated planning bundle."""
+    """Build the highest-ranked draft schedule for one planning bundle."""
+
+    return build_plan_options(bundle)[0]
+
+
+def build_plan_options(bundle: PlanningBundle) -> list[PlanOutput]:
+    """Build every maximum-coverage arrangement, ranked best-first.
+
+    A group arrangement is a partition of the covered students. Each group is
+    paired with its best shared meeting window; alternate windows for the same
+    membership do not create duplicate arrangements.
+    """
 
     context, normalized_by_student = normalize_weekly_availability(bundle)
     active_students = [student for student in bundle.roster.students if student.active]
@@ -126,23 +137,78 @@ def build_plan(bundle: PlanningBundle) -> PlanOutput:
     )
     minimum_group_size = bundle.class_config.weekly_config.minimum_group_size
 
-    search_result = find_best_plan(
+    search_results = find_all_plans(
         eligible_students=eligible_students,
         requested_max_groups=requested_max_groups,
         minimum_group_size=minimum_group_size,
         context=context,
     )
 
-    planned_groups: list[PlannedGroup] = []
-    if search_result is None:
+    generated_at = datetime.now(context.timezone)
+    if not search_results:
         for student in eligible_students:
             excluded_students.append(
                 ExcludedStudent(
                     student_id=student.student_id,
-                    reason="No valid balanced group could be formed under the current constraints.",
+                    reason="No valid group could be formed under the current constraints.",
                 )
             )
-    else:
+        return [
+            _build_plan_output(
+                bundle=bundle,
+                context=context,
+                active_student_count=len(active_students),
+                responded_student_count=len(responded_students),
+                eligible_student_count=len(eligible_students),
+                requested_max_groups=requested_max_groups,
+                base_excluded_students=excluded_students,
+                eligible_students=eligible_students,
+                search_result=None,
+                arrangement_number=1,
+                arrangement_count=1,
+                generated_at=generated_at,
+            )
+        ]
+
+    return [
+        _build_plan_output(
+            bundle=bundle,
+            context=context,
+            active_student_count=len(active_students),
+            responded_student_count=len(responded_students),
+            eligible_student_count=len(eligible_students),
+            requested_max_groups=requested_max_groups,
+            base_excluded_students=excluded_students,
+            eligible_students=eligible_students,
+            search_result=search_result,
+            arrangement_number=index,
+            arrangement_count=len(search_results),
+            generated_at=generated_at,
+        )
+        for index, search_result in enumerate(search_results, start=1)
+    ]
+
+
+def _build_plan_output(
+    *,
+    bundle: PlanningBundle,
+    context: NormalizationContext,
+    active_student_count: int,
+    responded_student_count: int,
+    eligible_student_count: int,
+    requested_max_groups: int,
+    base_excluded_students: list[ExcludedStudent],
+    eligible_students: list[EligibleStudent],
+    search_result: PlannerSearchResult | None,
+    arrangement_number: int,
+    arrangement_count: int,
+    generated_at: datetime,
+) -> PlanOutput:
+    """Convert one search result into the public planner response."""
+
+    planned_groups: list[PlannedGroup] = []
+    excluded_students = list(base_excluded_students)
+    if search_result is not None:
         excluded_id_set = {
             eligible_students[index].student_id
             for index in search_result.outcome.excluded_indices
@@ -151,7 +217,7 @@ def build_plan(bundle: PlanningBundle) -> PlanOutput:
             excluded_students.append(
                 ExcludedStudent(
                     student_id=student_id,
-                    reason="Excluded to preserve balanced groups and maximize total coverage.",
+                    reason="Excluded to preserve valid groups and maximize total coverage.",
                 )
             )
 
@@ -180,23 +246,24 @@ def build_plan(bundle: PlanningBundle) -> PlanOutput:
         student_id for group in planned_groups for student_id in group.student_ids
     }
     summary = PlanSummary(
-        requested_student_count=len(active_students),
-        responded_student_count=len(responded_students),
+        requested_student_count=active_student_count,
+        responded_student_count=responded_student_count,
         covered_student_count=len(covered_student_ids),
         excluded_student_count=len(excluded_students),
         group_count=len(planned_groups),
     )
 
     planner_notes = [
-        f"Resolved max_groups={requested_max_groups} for {len(active_students)} active students.",
-        f"Received availability from {len(responded_students)} of {len(active_students)} active students.",
-        f"{len(eligible_students)} students produced at least one valid 2-hour window after normalization.",
+        f"Resolved max_groups={requested_max_groups} for {active_student_count} active students.",
+        f"Received availability from {responded_student_count} of {active_student_count} active students.",
+        f"{eligible_student_count} students produced at least one valid meeting window after normalization.",
     ]
     if search_result is None:
         planner_notes.append("No valid group configuration was found.")
     else:
         planner_notes.append(
-            f"Selected {search_result.group_count} balanced group(s) covering {search_result.covered_count} student(s)."
+            f"Arrangement {arrangement_number} of {arrangement_count}: "
+            f"{search_result.group_count} group(s) covering {search_result.covered_count} student(s)."
         )
 
     return PlanOutput(
@@ -205,7 +272,7 @@ def build_plan(bundle: PlanningBundle) -> PlanOutput:
         week_end_local=bundle.availability.week_end_local,
         timezone=bundle.class_config.timezone,
         requested_max_groups=requested_max_groups,
-        generated_at=datetime.now(context.timezone),
+        generated_at=generated_at,
         summary=summary,
         groups=planned_groups,
         excluded_students=sorted(excluded_students, key=lambda student: student.student_id),
@@ -229,33 +296,86 @@ def find_best_plan(
     minimum_group_size: int,
     context: NormalizationContext,
 ) -> PlannerSearchResult | None:
-    """Search from best coverage downward until a valid balanced plan is found."""
+    """Return the highest-ranked maximum-coverage arrangement."""
+
+    plans = find_all_plans(
+        eligible_students=eligible_students,
+        requested_max_groups=requested_max_groups,
+        minimum_group_size=minimum_group_size,
+        context=context,
+    )
+    return plans[0] if plans else None
+
+
+def find_all_plans(
+    eligible_students: list[EligibleStudent],
+    requested_max_groups: int,
+    minimum_group_size: int,
+    context: NormalizationContext,
+) -> list[PlannerSearchResult]:
+    """Enumerate every arrangement at the highest achievable coverage.
+
+    Ranking favors fewer, larger groups before window flexibility and buffer.
+    This prevents the configured maximum from being treated as a target that
+    unnecessarily fragments six compatible students into three pairs.
+    """
 
     eligible_count = len(eligible_students)
     if eligible_count < minimum_group_size:
-        return None
+        return []
 
-    # Prefer plans that cover more students before considering smaller drafts.
     for covered_count in range(eligible_count, minimum_group_size - 1, -1):
+        results: list[PlannerSearchResult] = []
         max_group_count = min(requested_max_groups, covered_count // minimum_group_size)
-        for group_count in range(max_group_count, 0, -1):
-            size_distribution = balanced_group_sizes(covered_count, group_count)
-            if size_distribution is None or min(size_distribution) < minimum_group_size:
+        for group_count in range(1, max_group_count + 1):
+            for size_distribution in group_size_distributions(
+                covered_count, group_count, minimum_group_size
+            ):
+                for outcome in solve_all_exact_groupings(
+                    eligible_students=eligible_students,
+                    size_distribution=size_distribution,
+                    exclusion_budget=eligible_count - covered_count,
+                    context=context,
+                ):
+                    results.append(
+                        PlannerSearchResult(
+                            requested_max_groups=requested_max_groups,
+                            covered_count=covered_count,
+                            group_count=group_count,
+                            outcome=outcome,
+                        )
+                    )
+        if results:
+            results.sort(key=lambda result: plan_sort_key(result, eligible_students))
+            return results
+    return []
+
+
+def group_size_distributions(
+    covered_count: int,
+    group_count: int,
+    minimum_group_size: int,
+) -> tuple[tuple[int, ...], ...]:
+    """Return every non-increasing group-size partition meeting the minimum."""
+
+    distributions: list[tuple[int, ...]] = []
+
+    def backtrack(remaining: int, groups_left: int, maximum_size: int, sizes: list[int]) -> None:
+        if groups_left == 0:
+            if remaining == 0:
+                distributions.append(tuple(sizes))
+            return
+
+        largest_possible = min(maximum_size, remaining - minimum_group_size * (groups_left - 1))
+        for size in range(largest_possible, minimum_group_size - 1, -1):
+            next_remaining = remaining - size
+            if next_remaining < minimum_group_size * (groups_left - 1):
                 continue
-            outcome = solve_exact_grouping(
-                eligible_students=eligible_students,
-                size_distribution=size_distribution,
-                exclusion_budget=eligible_count - covered_count,
-                context=context,
-            )
-            if outcome is not None:
-                return PlannerSearchResult(
-                    requested_max_groups=requested_max_groups,
-                    covered_count=covered_count,
-                    group_count=group_count,
-                    outcome=outcome,
-                )
-    return None
+            backtrack(next_remaining, groups_left - 1, size, sizes + [size])
+
+    if group_count > 0 and covered_count >= group_count * minimum_group_size:
+        backtrack(covered_count, group_count, covered_count, [])
+    return tuple(distributions)
 
 
 
@@ -278,14 +398,41 @@ def solve_exact_grouping(
     exclusion_budget: int,
     context: NormalizationContext,
 ) -> SearchOutcome | None:
-    """Solve the exact grouping problem for one fixed size distribution."""
+    """Return the best outcome for one fixed size distribution."""
+
+    outcomes = solve_all_exact_groupings(
+        eligible_students=eligible_students,
+        size_distribution=size_distribution,
+        exclusion_budget=exclusion_budget,
+        context=context,
+    )
+    if not outcomes:
+        return None
+
+    best_outcome: SearchOutcome | None = None
+    for outcome in outcomes:
+        best_outcome = choose_better_outcome(
+            current=best_outcome,
+            proposed=outcome,
+            eligible_students=eligible_students,
+        )
+    return best_outcome
+
+
+def solve_all_exact_groupings(
+    eligible_students: list[EligibleStudent],
+    size_distribution: tuple[int, ...],
+    exclusion_budget: int,
+    context: NormalizationContext,
+) -> tuple[SearchOutcome, ...]:
+    """Enumerate all exact groupings for one fixed size distribution."""
 
     candidates_by_size = {
         size: generate_candidate_groups(eligible_students, size, context)
         for size in set(size_distribution)
     }
     if any(not candidates_by_size[size] for size in set(size_distribution)):
-        return None
+        return ()
 
     candidates_by_size_and_member: dict[int, dict[int, tuple[CandidateGroup, ...]]] = {}
     for size, candidates in candidates_by_size.items():
@@ -307,7 +454,7 @@ def solve_exact_grouping(
         resolved_mask: int,
         exclusion_remaining: int,
         remaining_counts: tuple[int, ...],
-    ) -> SearchOutcome | None:
+    ) -> tuple[SearchOutcome, ...]:
         """Backtracking search over unresolved students.
 
         `resolved_mask` tracks both grouped students and deliberate exclusions.
@@ -323,14 +470,14 @@ def solve_exact_grouping(
             for idx in range(len(size_values))
         )
         if len(unresolved_indices) != exclusion_remaining + remaining_group_slots:
-            return None
+            return ()
         if remaining_group_slots == 0:
             if len(unresolved_indices) != exclusion_remaining:
-                return None
-            return SearchOutcome(groups=(), excluded_indices=unresolved_indices)
+                return ()
+            return (SearchOutcome(groups=(), excluded_indices=unresolved_indices),)
 
         pivot = unresolved_indices[0]
-        best_outcome: SearchOutcome | None = None
+        outcomes: list[SearchOutcome] = []
 
         for size_index, group_size in enumerate(size_values):
             if remaining_counts[size_index] == 0:
@@ -340,42 +487,35 @@ def solve_exact_grouping(
                     continue
                 next_counts = list(remaining_counts)
                 next_counts[size_index] -= 1
-                branch_outcome = search(
+                branch_outcomes = search(
                     resolved_mask | candidate.member_mask,
                     exclusion_remaining,
                     tuple(next_counts),
                 )
-                if branch_outcome is None:
-                    continue
-                proposed_outcome = SearchOutcome(
-                    groups=(candidate,) + branch_outcome.groups,
-                    excluded_indices=branch_outcome.excluded_indices,
-                )
-                best_outcome = choose_better_outcome(
-                    current=best_outcome,
-                    proposed=proposed_outcome,
-                    eligible_students=eligible_students,
+                outcomes.extend(
+                    SearchOutcome(
+                        groups=(candidate,) + branch_outcome.groups,
+                        excluded_indices=branch_outcome.excluded_indices,
+                    )
+                    for branch_outcome in branch_outcomes
                 )
 
         if exclusion_remaining > 0:
             # If no group placement works for the pivot, try consuming one exclusion.
-            branch_outcome = search(
+            branch_outcomes = search(
                 resolved_mask | (1 << pivot),
                 exclusion_remaining - 1,
                 remaining_counts,
             )
-            if branch_outcome is not None:
-                proposed_outcome = SearchOutcome(
+            outcomes.extend(
+                SearchOutcome(
                     groups=branch_outcome.groups,
                     excluded_indices=(pivot,) + branch_outcome.excluded_indices,
                 )
-                best_outcome = choose_better_outcome(
-                    current=best_outcome,
-                    proposed=proposed_outcome,
-                    eligible_students=eligible_students,
-                )
+                for branch_outcome in branch_outcomes
+            )
 
-        return best_outcome
+        return tuple(outcomes)
 
     return search(0, exclusion_budget, initial_remaining_counts)
 
@@ -560,4 +700,20 @@ def outcome_token(
     return group_token, excluded_token
 
 
+def plan_sort_key(
+    result: PlannerSearchResult,
+    eligible_students: list[EligibleStudent],
+) -> tuple:
+    """Rank maximum-coverage plans with deterministic, user-facing priorities."""
 
+    group_sizes = [len(group.student_indices) for group in result.outcome.groups]
+    size_spread = max(group_sizes) - min(group_sizes)
+    flexibility, buffer_floor, buffer_score = outcome_score(result.outcome)
+    return (
+        result.group_count,
+        size_spread,
+        -flexibility,
+        -buffer_floor,
+        -buffer_score,
+        outcome_token(result.outcome, eligible_students),
+    )

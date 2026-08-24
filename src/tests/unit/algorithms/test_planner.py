@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.algorithms import build_plan
+from app.algorithms import build_plan, build_plan_options
 from app.schemas import PlanningBundle, StudentAvailability
 
 
@@ -197,6 +197,29 @@ def test_planner_respects_minimum_group_size_of_4() -> None:
     plan = build_plan(bundle)
     assert plan.summary.group_count == 1
     assert all(len(g.student_ids) >= 4 for g in plan.groups)
+
+
+def test_planner_returns_all_valid_arrangements_and_ranks_larger_groups_first() -> None:
+    bundle = _bundle_with_settings(minimum_group_size=2)
+
+    plans = build_plan_options(bundle)
+    size_arrangements = [
+        sorted((len(group.student_ids) for group in plan.groups), reverse=True)
+        for plan in plans
+    ]
+
+    # Six mutually compatible students have 41 set partitions whose groups
+    # all contain at least two people: [6], [4,2], [3,3], and [2,2,2].
+    assert len(plans) == 41
+    assert size_arrangements[0] == [6]
+    assert [3, 3] in size_arrangements
+    assert [2, 2, 2] in size_arrangements
+
+    membership_tokens = {
+        tuple(sorted(tuple(sorted(group.student_ids)) for group in plan.groups))
+        for plan in plans
+    }
+    assert len(membership_tokens) == len(plans)
 
 
 def test_planner_rejects_students_without_sufficient_window_for_90_min_session() -> None:
